@@ -9,8 +9,8 @@ import re
 from typing import Optional
 
 from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
-from langchain.schema.language_model import BaseLanguageModel
+from langchain_core.prompts import PromptTemplate
+from langchain_core.language_models import BaseLanguageModel
 from dotenv import load_dotenv
 
 load_dotenv()
