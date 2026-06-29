@@ -1,6 +1,5 @@
 # Project Report: GenAI Learning Mentor
-
-**Team Name:** [Your Team Name]  
+ 
 **Date:** June 2026  
 **Track:** Generative AI Applications  
 
