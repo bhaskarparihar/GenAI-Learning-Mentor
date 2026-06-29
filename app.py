@@ -2,6 +2,10 @@
 # app.py - Streamlit Frontend for GenAI Learning Mentor
 # ============================================================
 
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 import os
 import json
 import tempfile
