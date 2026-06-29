@@ -159,6 +159,7 @@ def init_state():
     defaults = {
         "provider": "gemini",
         "api_key_set": False,
+        "api_key_source": "manual",  # 'secrets', 'env', or 'manual'
         "chat_history": [],
         "quiz_questions": [],
         "quiz_answers": {},
@@ -175,6 +176,57 @@ def init_state():
 
 
 init_state()
+
+
+# ── Auto-detect API key from Streamlit secrets or environment ──
+def auto_detect_api_key():
+    """Read API key from st.secrets or os.environ automatically."""
+    if st.session_state["api_key_set"]:
+        return  # Already configured, skip
+
+    # 1. Try Streamlit secrets (set via Streamlit Cloud dashboard)
+    try:
+        if "GOOGLE_API_KEY" in st.secrets:
+            os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+            st.session_state["api_key_set"] = True
+            st.session_state["provider"] = "gemini"
+            st.session_state["api_key_source"] = "secrets"
+            return
+        if "OPENAI_API_KEY" in st.secrets:
+            os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+            st.session_state["api_key_set"] = True
+            st.session_state["provider"] = "openai"
+            st.session_state["api_key_source"] = "secrets"
+            return
+    except Exception:
+        pass  # st.secrets may not exist locally
+
+    # 2. Try environment variables (set via .env file locally)
+    if os.environ.get("GOOGLE_API_KEY"):
+        st.session_state["api_key_set"] = True
+        st.session_state["provider"] = "gemini"
+        st.session_state["api_key_source"] = "env"
+        return
+    if os.environ.get("OPENAI_API_KEY"):
+        st.session_state["api_key_set"] = True
+        st.session_state["provider"] = "openai"
+        st.session_state["api_key_source"] = "env"
+        return
+
+
+auto_detect_api_key()
+if st.session_state["api_key_set"]:
+    # Pre-load engine + agent once the key is ready
+    try:
+        from rag_engine import RAGEngine
+        from learning_agent import LearningAgent
+        p = st.session_state["provider"]
+        if st.session_state["rag_engine"] is None:
+            st.session_state["rag_engine"] = RAGEngine(provider=p)
+        if st.session_state["agent"] is None:
+            st.session_state["agent"] = LearningAgent(provider=p)
+    except Exception:
+        pass
 
 
 # ── Helper: load engine + agent ───────────────────────────────
@@ -198,33 +250,42 @@ with st.sidebar:
 
     # ── API setup ──────────────────────────────────────────
     st.markdown("### ⚙️ Configuration")
-    provider = st.selectbox(
-        "LLM Provider",
-        ["gemini", "openai"],
-        index=0,
-        key="provider_select",
-    )
-    api_key = st.text_input(
-        "API Key",
-        type="password",
-        placeholder="Paste your API key here…",
-        help="Gemini: AIza...  |  OpenAI: sk-...",
-    )
 
-    if st.button("🔑 Set API Key", use_container_width=True):
-        if api_key:
-            if provider == "gemini":
-                os.environ["GOOGLE_API_KEY"] = api_key
+    # Show auto-detected key status
+    if st.session_state["api_key_set"] and st.session_state["api_key_source"] in ("secrets", "env"):
+        src = "Streamlit Secrets" if st.session_state["api_key_source"] == "secrets" else ".env file"
+        st.success(f"✅ API key loaded from **{src}**")
+        st.markdown(f"Provider: `{st.session_state['provider']}`")
+        st.markdown("---")
+    else:
+        provider = st.selectbox(
+            "LLM Provider",
+            ["gemini", "openai"],
+            index=0,
+            key="provider_select",
+        )
+        api_key = st.text_input(
+            "API Key",
+            type="password",
+            placeholder="Paste your API key here…",
+            help="Gemini: AIza...  |  OpenAI: sk-...",
+        )
+
+        if st.button("🔑 Set API Key", use_container_width=True):
+            if api_key:
+                if provider == "gemini":
+                    os.environ["GOOGLE_API_KEY"] = api_key
+                else:
+                    os.environ["OPENAI_API_KEY"] = api_key
+                st.session_state["provider"] = provider
+                st.session_state["api_key_set"] = True
+                st.session_state["api_key_source"] = "manual"
+                st.session_state["rag_engine"] = None  # reset on provider change
+                st.session_state["agent"] = None
+                load_engine_and_agent()
+                st.success("✅ API key configured!")
             else:
-                os.environ["OPENAI_API_KEY"] = api_key
-            st.session_state["provider"] = provider
-            st.session_state["api_key_set"] = True
-            st.session_state["rag_engine"] = None  # reset on provider change
-            st.session_state["agent"] = None
-            load_engine_and_agent()
-            st.success("✅ API key configured!")
-        else:
-            st.error("Please enter an API key.")
+                st.error("Please enter an API key.")
 
     st.markdown("---")
 
