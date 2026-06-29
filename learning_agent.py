@@ -1,5 +1,6 @@
 # ============================================================
 # learning_agent.py - LangChain Agent: Tutor, Planner, Quiz Master
+# (Uses modern LCEL - no deprecated langchain.chains imports)
 # ============================================================
 
 from __future__ import annotations
@@ -8,16 +9,16 @@ import json
 import re
 from typing import Optional
 
-from langchain.chains import RetrievalQA
-from langchain_core.prompts import PromptTemplate
-from langchain_core.language_models import BaseLanguageModel
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
 # ── LLM factory ─────────────────────────────────────────────
-def get_llm(provider: str = "gemini", temperature: float = 0.4) -> BaseLanguageModel:
+def get_llm(provider: str = "gemini", temperature: float = 0.4):
     if provider == "openai":
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(model="gpt-3.5-turbo", temperature=temperature)
@@ -133,6 +134,11 @@ Format:
 """
 
 
+# ── Helper: format docs for context ──────────────────────────
+def _format_docs(docs) -> str:
+    return "\n\n".join(doc.page_content for doc in docs)
+
+
 class LearningAgent:
     """The core AI learning coach orchestrating all agent capabilities."""
 
@@ -141,24 +147,26 @@ class LearningAgent:
         self.llm = get_llm(provider)
         self.conversation_history: list[dict] = []
 
-    # ── Adaptive Tutoring ────────────────────────────────────
+    # ── Adaptive Tutoring (LCEL chain) ───────────────────────
     def ask_tutor(self, question: str, retriever) -> str:
-        """Answer a student question using RAG."""
+        """Answer a student question using RAG via LCEL."""
         if retriever is None:
             return (
                 "⚠️ No course materials uploaded yet. "
                 "Please upload your PDF notes first so I can give you context-aware answers!"
             )
 
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",
-            retriever=retriever,
-            chain_type_kwargs={"prompt": TUTOR_PROMPT},
-            return_source_documents=False,
+        # Build LCEL chain
+        chain = (
+            {
+                "context": retriever | RunnableLambda(_format_docs),
+                "question": RunnablePassthrough(),
+            }
+            | TUTOR_PROMPT
+            | self.llm
+            | StrOutputParser()
         )
-        result = qa_chain.invoke({"query": question})
-        answer = result.get("result", str(result))
+        answer = chain.invoke(question)
 
         # Store in history for weak area analysis
         self.conversation_history.append({"role": "student", "content": question})
@@ -170,8 +178,8 @@ class LearningAgent:
         """Generate a personalized study plan using RAG context + weak areas."""
         context = ""
         if retriever:
-            docs = retriever.get_relevant_documents(weak_areas)
-            context = "\n\n".join([d.page_content for d in docs])
+            docs = retriever.invoke(weak_areas)
+            context = _format_docs(docs)
         else:
             context = "No specific course notes provided. Generating a general study plan."
 
@@ -186,8 +194,8 @@ class LearningAgent:
         """Generate MCQ quiz from course material. Returns list of question dicts."""
         context = ""
         if retriever:
-            docs = retriever.get_relevant_documents(topic if topic != "general" else "key concepts")
-            context = "\n\n".join([d.page_content for d in docs])
+            docs = retriever.invoke(topic if topic != "general" else "key concepts")
+            context = _format_docs(docs)
         else:
             context = f"Topic: {topic}"
 
@@ -199,12 +207,10 @@ class LearningAgent:
 
         # Extract JSON safely
         try:
-            # Strip markdown fences if present
             raw = re.sub(r"```json|```", "", raw).strip()
             questions = json.loads(raw)
             return questions
         except json.JSONDecodeError:
-            # Fallback: return raw as a single item
             return [{"question": raw, "options": {}, "answer": "", "explanation": ""}]
 
     # ── Weak Area Identification ─────────────────────────────
@@ -230,8 +236,8 @@ class LearningAgent:
         """Generate diverse practice questions with model answers."""
         context = ""
         if retriever:
-            docs = retriever.get_relevant_documents(topic)
-            context = "\n\n".join([d.page_content for d in docs])
+            docs = retriever.invoke(topic)
+            context = _format_docs(docs)
         else:
             context = f"Topic: {topic}"
 
